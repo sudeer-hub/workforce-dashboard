@@ -1,4 +1,6 @@
 
+import { useEffect, useState } from "react";
+
 import {
   PieChart,
   Pie,
@@ -6,8 +8,6 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-
-import { workforceDistribution } from "./premiumMockData";
 
 type RangeType = "Default" | "Today" | "7D" | "30D" | "3M";
 
@@ -27,124 +27,172 @@ const DONUT_COLORS = [
   "#E77988",
 ];
 
-const workforceDistributionByRange: Record<
-  RangeType,
-  WorkforceStatus[]
-> = {
-  Default: workforceDistribution,
-  Today: [
-    { name: "Present", value: 1086 },
-    { name: "On Leave", value: 42 },
-    { name: "Absent", value: 96 },
-    { name: "Remote", value: 24 },
-  ],
-  "7D": [
-    { name: "Present", value: 982 },
-    { name: "On Leave", value: 46 },
-    { name: "Absent", value: 178 },
-    { name: "Remote", value: 42 },
-  ],
-  "30D": [
-    { name: "Present", value: 968 },
-    { name: "On Leave", value: 44 },
-    { name: "Absent", value: 190 },
-    { name: "Remote", value: 46 },
-  ],
-  "3M": [
-    { name: "Present", value: 945 },
-    { name: "On Leave", value: 48 },
-    { name: "Absent", value: 205 },
-    { name: "Remote", value: 50 },
-  ],
-};
-
-const rangeDescription: Record<RangeType, string> = {
-  Default: "Today's workforce status",
-  Today: "Workforce status for today",
-  "7D": "Workforce status over 7 days",
-  "30D": "Workforce status over 30 days",
-  "3M": "Workforce status over 3 months",
-};
-
 export default function PremiumWorkforceChart({
   activeRange,
 }: PremiumWorkforceChartProps) {
-  const selectedDistribution =
-    workforceDistributionByRange[activeRange];
+  const [distribution, setDistribution] =
+    useState<WorkforceStatus[]>([]);
 
-  const totalEmployees = selectedDistribution.reduce(
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchWorkforceData = async () => {
+      try {
+        setLoading(true);
+        setError("");
+
+        const response = await fetch(
+          "http://localhost:5000/api/dashboard/stats"
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch workforce data");
+        }
+
+        const stats = await response.json();
+
+        const data: WorkforceStatus[] = [
+          { name: "Present", value: stats.present },
+          { name: "On Leave", value: stats.onLeave },
+          { name: "Absent", value: stats.absent },
+        ];
+
+        if (isMounted) {
+          setDistribution(data);
+        }
+      } catch (err) {
+        if (isMounted) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load workforce data"
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchWorkforceData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeRange]);
+
+  const totalEmployees = distribution.reduce(
     (total, item) => total + item.value,
-    0,
+    0
   );
+
+  const rangeDescription =
+    activeRange === "Today"
+      ? "Workforce status for today"
+      : "Current workforce status from SQLite database";
 
   return (
     <section className="premium-panel workforce-panel">
       <div className="panel-heading">
         <div>
           <h3>Workforce Overview</h3>
-          <p>{rangeDescription[activeRange]}</p>
+          <p>{rangeDescription}</p>
         </div>
       </div>
 
       <div className="workforce-chart">
-        <div className="donut-wrapper">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={selectedDistribution}
-                dataKey="value"
-                nameKey="name"
-                innerRadius="67%"
-                outerRadius="88%"
-                paddingAngle={3}
-                stroke="none"
-                animationDuration={700}
-              >
-                {selectedDistribution.map((item, index) => (
-                  <Cell
-                    key={item.name}
-                    fill={DONUT_COLORS[index % DONUT_COLORS.length]}
-                  />
-                ))}
-              </Pie>
-
-              <Tooltip
-                contentStyle={{
-                  borderRadius: 12,
-                  border: "1px solid #DCE8EB",
-                  boxShadow: "0 8px 24px rgba(30, 41, 59, 0.08)",
-                  fontFamily: "Poppins, sans-serif",
-                  fontSize: 12,
-                }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-
-          <div className="donut-center">
-            <strong>{totalEmployees.toLocaleString("en-IN")}</strong>
-            <span>Employees</span>
+        {loading ? (
+          <div className="chart-state">
+            Loading workforce data...
           </div>
-        </div>
+        ) : error ? (
+          <div className="chart-state">
+            {error}
+          </div>
+        ) : distribution.length === 0 || totalEmployees === 0 ? (
+          <div className="chart-state">
+            No workforce data available.
+          </div>
+        ) : (
+          <>
+            <div className="donut-wrapper">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={distribution}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius="67%"
+                    outerRadius="88%"
+                    paddingAngle={3}
+                    stroke="none"
+                    animationDuration={700}
+                  >
+                    {distribution.map((item, index) => (
+                      <Cell
+                        key={item.name}
+                        fill={
+                          DONUT_COLORS[
+                            index % DONUT_COLORS.length
+                          ]
+                        }
+                      />
+                    ))}
+                  </Pie>
 
-        <div className="workforce-legend">
-          {selectedDistribution.map((item, index) => (
-            <div className="workforce-legend-row" key={item.name}>
-              <span
-                className="legend-dot"
-                style={{
-                  backgroundColor:
-                    DONUT_COLORS[index % DONUT_COLORS.length],
-                }}
-              />
+                  <Tooltip
+                    contentStyle={{
+                      borderRadius: 12,
+                      border: "1px solid #DCE8EB",
+                      boxShadow:
+                        "0 8px 24px rgba(30, 41, 59, 0.08)",
+                      fontFamily: "Poppins, sans-serif",
+                      fontSize: 12,
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
 
-              <span className="workforce-legend-label">
-                {item.name}
-              </span>
-
-              <strong>{item.value.toLocaleString("en-IN")}</strong>
+              <div className="donut-center">
+                <strong>
+                  {totalEmployees.toLocaleString("en-IN")}
+                </strong>
+                <span>Employees</span>
+              </div>
             </div>
-          ))}
-        </div>
+
+            <div className="workforce-legend">
+              {distribution.map((item, index) => (
+                <div
+                  className="workforce-legend-row"
+                  key={item.name}
+                >
+                  <span
+                    className="legend-dot"
+                    style={{
+                      backgroundColor:
+                        DONUT_COLORS[
+                          index % DONUT_COLORS.length
+                        ],
+                    }}
+                  />
+
+                  <span className="workforce-legend-label">
+                    {item.name}
+                  </span>
+
+                  <strong>
+                    {item.value.toLocaleString("en-IN")}
+                  </strong>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </section>
   );

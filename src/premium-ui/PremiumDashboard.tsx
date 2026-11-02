@@ -1,5 +1,5 @@
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Download,
   Moon,
@@ -21,10 +21,17 @@ import PremiumActivityTable from "./PremiumActivityTable";
 import {
   attendanceTrendByRange,
   departmentData,
-  recentActivity,
 } from "./premiumMockData";
 
 type RangeType = "Default" | "Today" | "7D" | "30D" | "3M";
+
+type DashboardStats = {
+  totalEmployees: number;
+  present: number;
+  absent: number;
+  onLeave: number;
+  attendanceRate: number;
+};
 
 const timeRanges: RangeType[] = [
   "Default",
@@ -47,17 +54,21 @@ const pageDescriptions: Record<string, string> = {
   "Help & Support": "Workforce dashboard help and support.",
 };
 
-const allDepartments = Array.from(
-  new Set(recentActivity.map((item) => item.department)),
-).sort();
+const allDepartments = [
+  "Finance",
+  "HR",
+  "IT",
+  "Marketing",
+  "Operations",
+];
 
-const allLocations = Array.from(
-  new Set(recentActivity.map((item) => item.location)),
-).sort();
+const allLocations = [
+  "Bangalore",
+  "Chennai",
+  "Hyderabad",
+];
 
-const allStatuses = Array.from(
-  new Set(recentActivity.map((item) => item.status)),
-).sort();
+const allStatuses = ["Active", "Inactive"];
 
 export default function PremiumDashboard() {
   const [activePage, setActivePage] = useState("Overview");
@@ -73,6 +84,55 @@ export default function PremiumDashboard() {
   const [selectedLocation, setSelectedLocation] = useState("All");
   const [selectedStatus, setSelectedStatus] = useState("All");
 
+  const [dashboardStats, setDashboardStats] =
+    useState<DashboardStats | null>(null);
+
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [statsError, setStatsError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchDashboardStats = async () => {
+      try {
+        setStatsLoading(true);
+        setStatsError("");
+
+        const response = await fetch(
+          "http://localhost:5000/api/dashboard/stats"
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch dashboard statistics");
+        }
+
+        const data: DashboardStats = await response.json();
+
+        if (isMounted) {
+          setDashboardStats(data);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setStatsError(
+            error instanceof Error
+              ? error.message
+              : "Unable to connect to backend"
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setStatsLoading(false);
+        }
+      }
+    };
+
+    fetchDashboardStats();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const isOverview = activePage === "Overview";
 
   const pageTitle = !isOverview
@@ -85,51 +145,6 @@ export default function PremiumDashboard() {
     pageDescriptions[activePage] ??
     "Workforce analytics overview.";
 
-  // Search and filters
-  const filteredActivity = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-
-    return recentActivity.filter((item) => {
-      const matchesSearch =
-        !query ||
-        [
-          item.name,
-          item.department,
-          item.location,
-          item.action,
-          item.time,
-          item.status,
-        ].some((value) =>
-          String(value ?? "").toLowerCase().includes(query),
-        );
-
-      const matchesDepartment =
-        selectedDepartment === "All" ||
-        item.department === selectedDepartment;
-
-      const matchesLocation =
-        selectedLocation === "All" ||
-        item.location === selectedLocation;
-
-      const matchesStatus =
-        selectedStatus === "All" ||
-        item.status === selectedStatus;
-
-      return (
-        matchesSearch &&
-        matchesDepartment &&
-        matchesLocation &&
-        matchesStatus
-      );
-    });
-  }, [
-    searchQuery,
-    selectedDepartment,
-    selectedLocation,
-    selectedStatus,
-  ]);
-
-  // Reset search and filters
   const resetFilters = () => {
     setSearchQuery("");
     setSelectedDepartment("All");
@@ -137,14 +152,17 @@ export default function PremiumDashboard() {
     setSelectedStatus("All");
   };
 
-  // Sidebar navigation
   const handlePageChange = (page: string) => {
     setActivePage(page);
     setMobileMenuOpen(false);
     resetFilters();
   };
 
-  // Export report as CSV
+  const filteredDepartmentData = useMemo(
+    () => departmentData,
+    []
+  );
+
   const handleExport = () => {
     const rows: (string | number)[][] = [
       ["WORKFORCE ANALYTICS REPORT"],
@@ -156,6 +174,19 @@ export default function PremiumDashboard() {
       ["Search Query", searchQuery || "None"],
       ["Export Date", new Date().toLocaleDateString("en-IN")],
       [],
+      ["DASHBOARD KPI"],
+      ["Metric", "Value"],
+      ["Total Employees", dashboardStats?.totalEmployees ?? "N/A"],
+      ["Present", dashboardStats?.present ?? "N/A"],
+      ["Absent", dashboardStats?.absent ?? "N/A"],
+      ["On Leave", dashboardStats?.onLeave ?? "N/A"],
+      [
+        "Attendance Rate",
+        dashboardStats
+          ? `${dashboardStats.attendanceRate}%`
+          : "N/A",
+      ],
+      [],
       ["ATTENDANCE TREND"],
       ["Day", "Present", "Absent"],
       ...attendanceTrendByRange[activeRange].map((item) => [
@@ -166,27 +197,9 @@ export default function PremiumDashboard() {
       [],
       ["DEPARTMENT DISTRIBUTION"],
       ["Department", "Employees"],
-      ...departmentData.map((item) => [
+      ...filteredDepartmentData.map((item) => [
         item.name,
         item.employees,
-      ]),
-      [],
-      ["RECENT ACTIVITY"],
-      [
-        "Employee",
-        "Department",
-        "Location",
-        "Action",
-        "Time",
-        "Status",
-      ],
-      ...filteredActivity.map((item) => [
-        item.name,
-        item.department,
-        item.location,
-        item.action,
-        item.time,
-        item.status,
       ]),
     ];
 
@@ -195,9 +208,9 @@ export default function PremiumDashboard() {
         row
           .map(
             (value) =>
-              `"${String(value ?? "").replace(/"/g, '""')}"`,
+              `"${String(value ?? "").replace(/"/g, '""')}"`
           )
-          .join(","),
+          .join(",")
       )
       .join("\r\n");
 
@@ -385,7 +398,11 @@ export default function PremiumDashboard() {
 
           {isOverview ? (
             <>
-              <PremiumKpiCards activeRange={activeRange} />
+              <PremiumKpiCards
+                stats={dashboardStats}
+                loading={statsLoading}
+                error={statsError}
+              />
 
               <section className="dashboard-chart-grid">
                 <PremiumAttendanceChart
@@ -402,9 +419,9 @@ export default function PremiumDashboard() {
               <section className="premium-panel activity-filter-panel">
                 <div className="activity-filter-heading">
                   <div>
-                    <h3>Filter Activity</h3>
+                    <h3>Filter Employees</h3>
                     <p>
-                      Narrow down recent activity by department,
+                      Filter employee records by department,
                       location and status.
                     </p>
                   </div>
@@ -490,9 +507,12 @@ export default function PremiumDashboard() {
               </section>
 
               <PremiumActivityTable
-                searchQuery={searchQuery}
-                activities={filteredActivity}
-              />
+  key={`${searchQuery}-${selectedDepartment}-${selectedLocation}-${selectedStatus}`}
+  searchQuery={searchQuery}
+  selectedDepartment={selectedDepartment}
+  selectedLocation={selectedLocation}
+  selectedStatus={selectedStatus}
+/>
             </>
           ) : (
             <section className="premium-panel">
@@ -512,7 +532,7 @@ export default function PremiumDashboard() {
           <footer className="premium-footer">
             <span>© 2026 Workforce Analytics</span>
             <span>
-              {activeRange} · Workforce insights · Demo data
+              {activeRange} · Workforce insights · SQLite database
             </span>
           </footer>
         </div>
